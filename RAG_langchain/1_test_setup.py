@@ -1,7 +1,10 @@
 import os
 from langchain_google_genai import ChatGoogleGenerativeAI
+from google.genai import Client
+from dotenv import load_dotenv
 
-os.environ["GOOGLE_API_KEY"] = "AIzaSyBHTI-j06hMCz59PPXhUvD2Jbp-50JCpQg"
+load_dotenv()
+client = Client(api_key=os.getenv("GOOGLE_API_KEY"))
 
 print("Connecting to the brain...")
 llm = ChatGoogleGenerativeAI(model="gemini-flash-latest")
