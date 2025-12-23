@@ -14,14 +14,13 @@ from dotenv import load_dotenv
 # --- CONFIGURATION ---
 load_dotenv()
 st.set_page_config(page_title="RAG Teacher Bot", page_icon="🤖")
-st.title("🤖 Chat with your PDF (Streamlit Edition)")
+st.title("🤖 Chat with Artemis Handbook")
 
-# Define paths (Same as your previous files)
-PDF_FILE = "4_1_mydocument.pdf" 
+# Define paths
+PDF_FILE = "4_1_mydocument.pdf"  # Ensure this matches your actual PDF name
 PERSIST_DIR = "chroma_db_storage"
 
 # --- 1. SETUP THE BRAIN (Cached) ---
-# We use @st.cache_resource so we don't reload the model every time you type a message.
 @st.cache_resource
 def initialize_rag_chain():
     # A. Load Embeddings
@@ -43,10 +42,10 @@ def initialize_rag_chain():
     
     retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
     
-    # C. Setup LLM
-    llm = ChatGoogleGenerativeAI(model="gemini-flash-latest")
+    # C. Setup LLM (Using standard flash model)
+    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite")
     
-    # D. "History Aware" Retriever (Rephrases questions)
+    # D. "History Aware" Retriever
     contextualize_q_system_prompt = """Given a chat history and the latest user question 
     which might reference context in the chat history, formulate a standalone question 
     which can be understood without the chat history. Do NOT answer the question, 
@@ -60,14 +59,7 @@ def initialize_rag_chain():
     
     history_aware_retriever = create_history_aware_retriever(llm, retriever, contextualize_q_prompt)
     
-    # E. Answer Question Chain
-    # qa_system_prompt = """You are an assistant for question-answering tasks. 
-    # Use the following pieces of retrieved context to answer the question. 
-    # If you don't know the answer, just say that you don't know. 
-    # \n\n
-    # {context}""" 
-
-    # Making the bot smart
+    # E. Answer Question Chain (Artemis Persona)
     qa_system_prompt = """You are Artemis, the AI HR Specialist for Artemis Corp. 
     Your tone should be professional, warm, and helpful.
     
@@ -95,11 +87,10 @@ def initialize_rag_chain():
 rag_chain = initialize_rag_chain()
 
 # --- 2. MANAGE CHAT HISTORY ---
-# Initialize chat history in session state if not present
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
-# Display chat messages from history on app rerun
+# Display history
 for message in st.session_state.chat_history:
     if isinstance(message, HumanMessage):
         with st.chat_message("user"):
@@ -108,50 +99,32 @@ for message in st.session_state.chat_history:
         with st.chat_message("assistant"):
             st.markdown(message.content)
 
-# --- 3. HANDLE USER INPUT ---
-user_input = st.chat_input("Ask me about your document...")
+# --- 3. CHAT UI (THE FIX) ---
+user_input = st.chat_input("Ask about the handbook...")
 
 if user_input:
-    # Display user message
+    # A. Display User Message
     with st.chat_message("user"):
         st.markdown(user_input)
     
-    # Get response
-    # Pass the session history to the chain so it remembers!
-    response = rag_chain.invoke({
-        "input": user_input,
-        "chat_history": st.session_state.chat_history
-    })
-    
-    answer = response["answer"]
-
-    # --- CITATION LOGIC START ---
-    # The 'context' key contains the documents used for the answer
-    sources = response.get("context", [])
-    source_names = set() # Use a set to avoid duplicate page numbers
-    
-    for doc in sources:
-        # Extract page number (if available) or use 'Unknown'
-        # Note: PyPDFLoader uses 0-based indexing (Page 1 is index 0)
-        page_num = doc.metadata.get("page", "Unknown")
-        
-        # If it's a number, add 1 so it looks like a real page number
-        if isinstance(page_num, int):
-            source_names.add(f"Page {page_num + 1}")
-        else:
-            source_names.add(f"Page {page_num}")
-    
-    # Create a string: "Page 1, Page 2"
-    source_string = ", ".join(sorted(source_names))
-    
-    if source_string:
-        answer += f"\n\n**Sources:** {source_string}"
-    # --- CITATION LOGIC END ---
-    
-    # Display assistant message
-    with st.chat_message("assistant"):
-        st.markdown(answer)
-    
-    # Save to history
+    # B. Add User Message to History
     st.session_state.chat_history.append(HumanMessage(content=user_input))
-    st.session_state.chat_history.append(AIMessage(content=answer))
+
+    # C. Stream the Response using st.write_stream
+    with st.chat_message("assistant"):
+        # We use a generator function to pull text chunks one by one
+        def stream_generator():
+            stream = rag_chain.stream({
+                "input": user_input, 
+                "chat_history": st.session_state.chat_history
+            })
+            for chunk in stream:
+                # We filter for the 'answer' key which contains the text
+                if "answer" in chunk:
+                    yield chunk["answer"]
+        
+        # This single line handles the streaming animation automatically
+        response = st.write_stream(stream_generator())
+    
+    # D. Save AI Answer to History
+    st.session_state.chat_history.append(AIMessage(content=response))
